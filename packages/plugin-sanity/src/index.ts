@@ -1,5 +1,5 @@
 import { createClient } from "@sanity/client";
-import { Character, ModelProviderName, Plugin, elizaLogger } from "@elizaos/core";
+import { Character, ModelProviderName, Plugin, elizaLogger, stringToUuid } from "@elizaos/core";
 import telegram from "@elizaos-plugins/client-telegram";
 import solana from "@elizaos-plugins/plugin-solana";
 import "dotenv/config";
@@ -22,6 +22,7 @@ export async function loadEnabledSanityCharacters(): Promise<Character[]> {
   try {
     const query = `*[_type == "character" && enabled == true] {
       _id,
+      id,
       name,
       modelProvider,
       "plugins": plugins[]->name,
@@ -58,8 +59,15 @@ export async function loadEnabledSanityCharacters(): Promise<Character[]> {
         })
         .filter((plugin): plugin is Plugin => plugin !== undefined);
 
+      // Generate UUID from Sanity character ID or name
+      const characterId = stringToUuid(sanityChar.id || sanityChar.name);
+      
+      // Log both IDs for debugging
+      elizaLogger.debug(`Character mapping: Sanity ID ${sanityChar._id} → elizaOS UUID ${characterId}`);
+      
       return {
-        id: sanityChar._id,
+        id: characterId, // Use the generated UUID
+        sanityId: sanityChar._id, // Store the original Sanity ID
         name: sanityChar.name,
         modelProvider: sanityChar.modelProvider as ModelProviderName,
         plugins: mappedPlugins,
