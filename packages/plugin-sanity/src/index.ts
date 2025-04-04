@@ -1,3 +1,4 @@
+// /home/cave/projects/bots/venv/elizaOS_env/elizaOS/packages/plugin-sanity/src/index.ts
 import { createClient } from "@sanity/client";
 import { Character, ModelProviderName, Plugin, elizaLogger, stringToUuid } from "@elizaos/core";
 import telegram from "@elizaos-plugins/client-telegram";
@@ -10,6 +11,7 @@ console.log("Env vars:", {
   token: process.env.SANITY_API_TOKEN,
   apiVersion: process.env.SANITY_API_VERSION,
 });
+
 export const sanityClient = createClient({
   projectId: process.env.SANITY_PROJECT_ID || "xyz789abc",
   dataset: process.env.SANITY_DATASET || "production",
@@ -24,15 +26,32 @@ export async function loadEnabledSanityCharacters(): Promise<Character[]> {
       _id,
       id,
       name,
+      username,
+      system,
       modelProvider,
-      "plugins": plugins[]->name,
+      plugins,
       bio,
-      "lore": lore[]->text,
-      "messageExamples": messageExamples[]->{ user, content { text, action } },
+      lore,
+      messageExamples[] {
+        conversation[] {
+          user,
+          content { text, action }
+        }
+      },
       postExamples,
       topics,
       adjectives,
-      "settings": settings { secrets }
+      style {
+        all,
+        chat,
+        post
+      },
+      settings {
+        secrets {
+          dynamic[] { key, value }
+        },
+        voice { model }
+      }
     }`;
     const sanityCharacters = await sanityClient.fetch(query);
 
@@ -59,34 +78,51 @@ export async function loadEnabledSanityCharacters(): Promise<Character[]> {
         })
         .filter((plugin): plugin is Plugin => plugin !== undefined);
 
-      // Generate UUID from Sanity character ID or name
-      const characterId = stringToUuid(sanityChar.id || sanityChar.name);
-      
-      // Log both IDs for debugging
+      const characterId = stringToUuid(sanityChar.id); // Use id only, no fallback
       elizaLogger.debug(`Character mapping: Sanity ID ${sanityChar._id} → elizaOS UUID ${characterId}`);
-      
-      return {
-        id: characterId, // Use the generated UUID
-        sanityId: sanityChar._id, // Store the original Sanity ID
+
+      const secrets = (sanityChar.settings?.secrets?.dynamic || []).reduce(
+        (acc: { [key: string]: string }, item: { key: string; value: string }) => {
+          acc[item.key] = item.value;
+          return acc;
+        },
+        {}
+      );
+
+      const validModelProviders = ["OPENAI", "OLLAMA", "CUSTOM"];
+      const modelProvider = validModelProviders.includes(sanityChar.modelProvider)
+        ? sanityChar.modelProvider.toLowerCase()
+        : ModelProviderName.OPENAI;
+
+      const character = {
+        id: characterId,
+        sanityId: sanityChar._id,
         name: sanityChar.name,
-        modelProvider: sanityChar.modelProvider as ModelProviderName,
+        username: sanityChar.username,
+        system: sanityChar.system,
+        modelProvider: modelProvider as ModelProviderName,
         plugins: mappedPlugins,
-        bio: sanityChar.bio || "",
+        bio: sanityChar.bio || [],
         lore: sanityChar.lore || [],
-        messageExamples: sanityChar.messageExamples
-          ? sanityChar.messageExamples.map((ex: any) => ({
-              user: ex.user,
-              content: { text: ex.content.text, action: ex.content.action },
-            }))
-          : [],
+        messageExamples: (sanityChar.messageExamples || []).map((ex: any) =>
+          ex.conversation.map((msg: any) => ({
+            user: msg.user,
+            content: { text: msg.content.text, action: msg.content.action },
+          }))
+        ),
         postExamples: sanityChar.postExamples || [],
         topics: sanityChar.topics || [],
         adjectives: sanityChar.adjectives || [],
-        settings: sanityChar.settings || {},
-        style: { all: [], chat: [], post: [] },
-        username: undefined,
+        style: {
+          all: sanityChar.style?.all || [],
+          chat: sanityChar.style?.chat || [],
+          post: sanityChar.style?.post || [],
+        },
+        settings: {
+          secrets,
+          voice: sanityChar.settings?.voice ? { model: sanityChar.settings.voice.model } : undefined,
+        },
         email: undefined,
-        system: undefined,
         imageModelProvider: undefined,
         imageVisionModelProvider: undefined,
         modelEndpointOverride: undefined,
@@ -97,11 +133,14 @@ export async function loadEnabledSanityCharacters(): Promise<Character[]> {
         instagramProfile: undefined,
         simsaiProfile: undefined,
         nft: undefined,
-        extends: undefined,
+        extends: [],
         twitterSpaces: undefined,
       };
+
+      return character;
     });
 
+    console.log("Fetched characters from Sanity:", JSON.stringify(characters, null, 2));
     return characters;
   } catch (error) {
     elizaLogger.error("Failed to fetch characters from Sanity:", error);
